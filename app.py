@@ -51,7 +51,7 @@ def get_caps_indices(word_count):
 def generate_hint(password):
     """
     Creates a 'Secure Hint' for the history log. 
-    Ex: 'apple-ORANGE-12345!' becomes '[5]word / [6]UPPER / num6'
+    Ex: 'apple-ORANGE-00123!' becomes '[5]word / [6]UPPER / num6'
     """
     parts = password.split("-")
     hint_parts = [f"[{len(p)}]{'UPPER' if p.isupper() else 'word'}" for p in parts[:-1]]
@@ -59,11 +59,7 @@ def generate_hint(password):
     return " / ".join(hint_parts)
 
 def check_pwned(password):
-    """
-    Uses k-Anonymity to check HaveIBeenPwned API.
-    Only the first 5 chars of the SHA-1 hash are sent to the API, 
-    keeping the full password private from the service.
-    """
+    """Checks HaveIBeenPwned API using k-Anonymity (Privacy-preserving)."""
     sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     try:
@@ -75,15 +71,12 @@ def check_pwned(password):
         return 0
     except: return -1
 
-def calculate_entropy(word_count, pool_size):
-    """
-    Calculates bits of entropy: log2(Pool Size ^ Word Count).
-    Also factors in the 100k variations of numbers and 7 special characters.
-    """
-    return (word_count * math.log2(max(pool_size, 1))) + math.log2(100000) + math.log2(7)
+def calculate_entropy(word_count, pool_size, digit_count):
+    """Calculates entropy: log2(Pool^Words) + log2(10^Digits) + log2(7 Specials)."""
+    return (word_count * math.log2(max(pool_size, 1))) + math.log2(10**digit_count) + math.log2(7)
 
 # --- 4. SESSION STATE ---
-# Initializes variables that persist as long as the browser tab is open
+# Persists data across user interactions in a single tab
 for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
     if key not in st.session_state:
         if key == 'auth': st.session_state[key] = False
@@ -91,11 +84,9 @@ for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
         else: st.session_state[key] = {}
 
 # --- 5. ONE-TIME LINK HANDLER ---
-# Listens for URL parameters like ?view=uuid
 if "view" in st.query_params:
     token = st.query_params["view"]
     if token in st.session_state.one_time_vault:
-        # .pop() retrieves AND deletes the secret simultaneously (Burn-after-reading)
         secret = st.session_state.one_time_vault.pop(token)
         st.balloons()
         st.success("### 🕵️ One-Time Secret Revealed")
@@ -109,7 +100,6 @@ if "view" in st.query_params:
 # --- 6. LOGIN ---
 if not st.session_state.auth:
     st.title("🔒 VaultGen Pro Login")
-    # Accesses the secret password stored in the Streamlit Cloud Dashboard
     master = st.secrets.get("PASSWORD", "admin123")
     entry = st.text_input("Master Password", type="password")
     if st.button("Unlock"):
@@ -121,9 +111,10 @@ if not st.session_state.auth:
 # --- 7. SIDEBAR ---
 with st.sidebar:
     st.title("⚙️ Settings")
-    # Range slider allows for diverse word lengths in a single password
     w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 11))
     w_num = st.slider("Word Count", 2, 5, 3)
+    # NEW: User can now select 2 to 5 digits
+    d_num = st.slider("Number of Digits", 2, 5, 5)
     b_size = st.slider("Batch Size", 3, 10, 5)
     show_raw = st.checkbox("Show Plain Text", value=True)
     
@@ -134,7 +125,7 @@ with st.sidebar:
         st.session_state.auth = False
         st.rerun()
 
-# Pre-filter dictionary based on slider range to optimize pool size
+# Filter dictionary based on slider range
 current_pool = [w for w in all_words if w_min <= len(w) <= w_max]
 pool_size = len(current_pool)
 
@@ -146,20 +137,20 @@ if c_gen.button("🚀 Generate Passwords", use_container_width=True):
     batch = []
     specials = ['!', '@', '#', '$', '%', '&', '*']
     for _ in range(b_size):
-        # Pick words from the filtered pool
         selected = [random.choice(current_pool) for _ in range(w_num)]
-        # Apply non-adjacent capitalization
+        # Apply Smart Capitalization
         for idx in get_caps_indices(w_num): selected[idx] = selected[idx].upper()
-        # Add a 5-digit number and one special char
-        suffix = f"{str(random.randint(0, 99999)).zfill(5)}{random.choice(specials)}"
-        pwd = "-".join(selected + [suffix])
         
-        # Save password and its cryptic hint to history
+        # Numeric logic: Handle leading zeros based on selected d_num
+        max_val = (10**d_num) - 1
+        num_suffix = str(random.randint(0, max_val)).zfill(d_num)
+        
+        pwd = "-".join(selected + [f"{num_suffix}{random.choice(specials)}"])
         st.session_state.history.insert(0, {"pwd": pwd, "hint": generate_hint(pwd)})
         batch.append(pwd)
     
     st.session_state.passwords = batch
-    st.session_state.strength_log.append(calculate_entropy(w_num, pool_size))
+    st.session_state.strength_log.append(calculate_entropy(w_num, pool_size, d_num))
 
 if c_clr.button("🗑️ Reset Display", use_container_width=True):
     st.session_state.passwords = []; st.rerun()
@@ -167,19 +158,17 @@ if c_clr.button("🗑️ Reset Display", use_container_width=True):
 # --- 9. ANALYTICS ---
 if st.session_state.passwords:
     st.divider()
-    bits = calculate_entropy(w_num, pool_size)
+    bits = calculate_entropy(w_num, pool_size, d_num)
     col_met, col_chart = st.columns([1, 2])
     
     with col_met:
         st.subheader("📊 Current Specs")
         st.metric("Entropy", f"{int(bits)} bits")
-        # Time to crack based on 100 billion guesses per second
         crack_yrs = (2**bits/100e9/31536000)
         st.metric("Crack Time", f"{crack_yrs:,.0f} yrs" if bits > 40 else "< 1 yr")
     
     with col_chart: 
         st.subheader("📈 Security Trend vs NIST Benchmark")
-        # Comparison graph showing current entropy vs the 80-bit target
         chart_data = pd.DataFrame({
             "Current Strength": st.session_state.strength_log,
             "NIST Target (80 bits)": [80] * len(st.session_state.strength_log)
@@ -194,7 +183,6 @@ if st.session_state.passwords:
         p_col.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:{color};'>{pwd if show_raw else '●'*len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
-            # Generates a QR image in memory and displays it
             buf = BytesIO()
             qrcode.make(pwd).save(buf, format="PNG")
             st.image(buf)
@@ -208,12 +196,11 @@ if st.session_state.passwords:
         if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
             token = str(uuid.uuid4())
             st.session_state.one_time_vault[token] = pwd
-            st.info(f"Link: `?view={token}`")
+            st.info(f"Link suffix: `?view={token}`")
 
 # --- 11. HISTORY & TIPS ---
 if st.session_state.history:
     with st.expander("📜 Secure Session Log (Hints Only)"):
-        # Shows hints by default to prevent shoulder-surfing
         for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
 st.divider()
 tips = [
