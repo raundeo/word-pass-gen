@@ -24,9 +24,9 @@ def load_dictionary():
 
 all_words = load_dictionary()
 
-# --- 3. SMART LOGIC FUNCTIONS ---
+# --- 3. SMART LOGIC & SECURITY FUNCTIONS ---
 def get_caps_indices(word_count):
-    """Calculates non-adjacent capitalization indices based on NIST standards."""
+    """Calculates non-adjacent capitalization indices based on word count."""
     if word_count == 2:
         return [random.randint(0, 1)]
     elif word_count == 3:
@@ -40,14 +40,14 @@ def get_caps_indices(word_count):
     return [0]
 
 def generate_hint(password):
-    """Creates a cryptic hint for the history log to avoid shoulder-surfing."""
+    """Creates a cryptic hint for the session log to prevent shoulder-surfing."""
     parts = password.split("-")
     hint_parts = [f"[{len(p)}]{'UPPER' if p.isupper() else 'word'}" for p in parts[:-1]]
     hint_parts.append(f"num{len(parts[-1])}")
     return " / ".join(hint_parts)
 
 def check_pwned(password):
-    """Checks HaveIBeenPwned API using k-Anonymity (SHA-1 prefixing)."""
+    """Checks HaveIBeenPwned API using k-Anonymity privacy protocol."""
     sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     try:
@@ -59,8 +59,18 @@ def check_pwned(password):
         return 0
     except: return -1
 
+def calculate_entropy_manual(password):
+    """Estimates entropy for manual input based on character variety."""
+    if not password: return 0
+    pool = 0
+    if any(c.islower() for c in password): pool += 26
+    if any(c.isupper() for c in password): pool += 26
+    if any(c.isdigit() for c in password): pool += 10
+    if any(not c.isalnum() for c in password): pool += 32
+    return len(password) * math.log2(pool) if pool > 0 else 0
+
 def calculate_entropy(word_count, pool_size, digit_count):
-    """Calculates total entropy bits including words, variable digits, and specials."""
+    """Calculates total entropy bits for generated passphrases."""
     return (word_count * math.log2(max(pool_size, 1))) + math.log2(10**digit_count) + math.log2(7)
 
 # --- 4. SESSION STATE INITIALIZATION ---
@@ -78,57 +88,69 @@ if "view" in st.query_params:
         st.balloons()
         st.success("### 🕵️ One-Time Secret Revealed")
         st.code(secret, language=None)
-        st.warning("Deleted from memory. This view cannot be accessed again.")
-        if st.button("Home"): st.query_params.clear(); st.rerun()
+        st.warning("Wiped from memory. This view cannot be accessed again.")
+        if st.button("Back to Generator"): st.query_params.clear(); st.rerun()
         st.stop()
     else:
         st.error("Invalid or expired link."); st.stop()
 
-# --- 6. LOGIN ---
+# --- 6. AUTHENTICATION ---
 if not st.session_state.auth:
-    st.title("🔒 VaultGen Pro Login")
-    master = st.secrets.get("PASSWORD", "admin123")
-    entry = st.text_input("Master Password", type="password")
-    if st.button("Unlock"):
-        if entry == master:
-            st.session_state.auth = True; st.rerun()
-        else: st.error("Access Denied.")
+    st.title("🔒 VaultGen Pro Access")
+    master_key = st.secrets.get("PASSWORD", "admin123")
+    if st.text_input("Master Password", type="password") == master_key:
+        if st.button("Unlock"): st.session_state.auth = True; st.rerun()
     st.stop()
 
-# --- 7. SIDEBAR ---
+# --- 7. SIDEBAR & SETTINGS ---
 with st.sidebar:
     st.title("⚙️ Settings")
     w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 11))
     w_num = st.slider("Word Count", 2, 5, 3)
-    d_num = st.slider("Number of Digits", 2, 5, 5) # New variable digit count
+    d_num = st.slider("Number of Digits", 2, 5, 5)
     b_size = st.slider("Batch Size", 3, 10, 5)
     show_raw = st.checkbox("Show Plain Text", value=True)
     
     st.divider()
     st.subheader("ℹ️ About")
-    st.caption("VaultGen Pro uses Diceware-style logic and NIST-standard entropy calculations.")
+    st.caption("VaultGen Pro leverages Diceware-style logic and NIST-standard calculations for maximum security.")
     if st.button("Logout", use_container_width=True): 
         st.session_state.auth = False; st.rerun()
 
 current_pool = [w for w in all_words if w_min <= len(w) <= w_max]
 pool_size = len(current_pool)
 
-# --- 8. MAIN DASHBOARD ---
+# --- 8. DASHBOARD UI ---
 st.title("🔐 VaultGen Pro Dashboard")
-c_gen, c_clr = st.columns(2)
 
-if c_gen.button("🚀 Generate Passwords", use_container_width=True):
+# Section: Manual Audit
+with st.expander("🔍 Check an Existing Password"):
+    test_pwd = st.text_input("Enter password to test (Not saved to history)", type="password")
+    if test_pwd:
+        c1, c2, c3 = st.columns(3)
+        m_bits = calculate_entropy_manual(test_pwd)
+        c1.metric("Entropy", f"{int(m_bits)} bits")
+        leaks = check_pwned(test_pwd)
+        if leaks > 0: c2.error(f"Leaked {leaks:,} times!")
+        else: c2.success("No leaks found!")
+        c3.info(f"Strength: {'Strong' if m_bits >= 80 else 'Moderate' if m_bits >= 60 else 'Weak'}")
+
+st.divider()
+
+# Generation Controls
+c_gen, c_clr = st.columns(2)
+if c_gen.button("🚀 Generate New Batch", use_container_width=True):
     batch = []
     specials = ['!', '@', '#', '$', '%', '&', '*']
     for _ in range(b_size):
         selected = [random.choice(current_pool) for _ in range(w_num)]
         for idx in get_caps_indices(w_num): selected[idx] = selected[idx].upper()
         
-        # Random number based on user selection with leading zeros
-        max_val = (10**d_num) - 1
-        num_suffix = str(random.randint(0, max_val)).zfill(d_num)
+        # Handle digits with leading zeros
+        max_v = (10**d_num) - 1
+        num_part = str(random.randint(0, max_v)).zfill(d_num)
         
-        pwd = "-".join(selected + [f"{num_suffix}{random.choice(specials)}"])
+        pwd = "-".join(selected + [f"{num_part}{random.choice(specials)}"])
         st.session_state.history.insert(0, {"pwd": pwd, "hint": generate_hint(pwd)})
         batch.append(pwd)
     
@@ -152,11 +174,11 @@ if st.session_state.passwords:
     
     with col_chart: 
         st.subheader("📈 Security Trend vs NIST Benchmark")
-        chart_data = pd.DataFrame({
+        chart_df = pd.DataFrame({
             "Current Strength": st.session_state.strength_log,
             "NIST Target (80 bits)": [80] * len(st.session_state.strength_log)
         })
-        st.line_chart(chart_data, color=["#DDA0DD", "#90EE90"])
+        st.line_chart(chart_df, color=["#DDA0DD", "#90EE90"])
 
     # --- 10. PASSWORD DISPLAY ---
     st.divider()
@@ -166,17 +188,17 @@ if st.session_state.passwords:
         p_col.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:{color};'>{pwd if show_raw else '●'*len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
-            tab_std, tab_sms = st.tabs(["Copy", "SMS"])
-            with tab_std:
-                buf_std = BytesIO()
-                qrcode.make(pwd).save(buf_std, format="PNG")
-                st.image(buf_std)
+            tab_copy, tab_sms = st.tabs(["Copy", "SMS"])
+            with tab_copy:
+                buf = BytesIO()
+                qrcode.make(pwd).save(buf, format="PNG")
+                st.image(buf, caption="Scan to copy")
             with tab_sms:
-                phone = st.text_input("Recipient (Optional)", placeholder="e.g. +123456789", key=f"p_{i}")
+                phone = st.text_input("Number (Optional)", placeholder="+123456789", key=f"sms_{i}")
                 sms_uri = f"sms:{phone}?body=VaultGen Password: {pwd}"
-                buf_sms = BytesIO()
-                qrcode.make(sms_uri).save(buf_sms, format="PNG")
-                st.image(buf_sms)
+                buf_s = BytesIO()
+                qrcode.make(sms_uri).save(buf_s, format="PNG")
+                st.image(buf_s, caption="Scan to send text")
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
@@ -188,13 +210,15 @@ if st.session_state.passwords:
             st.session_state.one_time_vault[token] = pwd
             st.info(f"Burn Token: {token}")
 
-# --- 11. FOOTER TICKER ---
+# --- 11. HISTORY & SECURITY TICKER ---
 if st.session_state.history:
     with st.expander("📜 Secure Session Log (Hints Only)"):
         for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
+
 st.divider()
 st.info(random.choice([
     "💡 NIST Tip: Favor passphrases (multiple words) over complex short passwords.",
     "💡 Fact: A 4-word passphrase is often harder to crack than a 10-character random string.",
-    "💡 Logic: Random capitalization in passphrases significantly boosts entropy."
+    "💡 Logic: Random capitalization in passphrases significantly boosts entropy.",
+    "💡 Tip: Use a password manager to store your generated passphrases securely."
 ]))
