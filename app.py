@@ -8,7 +8,7 @@ import uuid
 import hashlib
 import requests
 import math
-import pandas as pd  # Added for the strength graph
+import pandas as pd  # For the security trend graph
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="VaultGen Pro", page_icon="🔐", layout="wide")
@@ -26,6 +26,7 @@ all_words = load_dictionary()
 
 # --- 3. SECURITY & UTILITY FUNCTIONS ---
 def generate_hint(password):
+    """Converts a password into a cryptic hint based on word lengths."""
     parts = password.split("-")
     hint_parts = []
     for part in parts:
@@ -38,6 +39,7 @@ def generate_hint(password):
     return " / ".join(hint_parts)
 
 def check_pwned(password):
+    """Checks HaveIBeenPwned API using k-Anonymity (SHA-1 prefix)."""
     sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     try:
@@ -50,7 +52,8 @@ def check_pwned(password):
     except: return -1
 
 def calculate_entropy(word_count, pool_size):
-    # Base calculation: log2(pool^count) + log2(number_pool) + log2(special_pool)
+    """Calculates bits of entropy: log2(pool^count) + log2(number_pool) + log2(special_pool)."""
+    # 100,000 for 5-digit number, 7 for special characters used
     return (word_count * math.log2(pool_size)) + math.log2(100000) + math.log2(7)
 
 # --- 4. SESSION STATE ---
@@ -70,20 +73,29 @@ if "view" in params:
         st.success("### 🕵️ One-Time Secret Revealed")
         st.code(secret, language=None)
         st.warning("Deleted from memory. This view cannot be accessed again.")
-        if st.button("Home"): st.query_params.clear(); st.rerun()
+        if st.button("Home"): 
+            st.query_params.clear()
+            st.rerun()
         st.stop()
     else:
-        st.error("Invalid link."); st.stop()
+        st.error("Invalid or expired link.")
+        if st.button("Home"): 
+            st.query_params.clear()
+            st.rerun()
+        st.stop()
 
 # --- 6. MASTER PASSWORD LOGIN ---
 if not st.session_state.auth:
     st.title("🔒 VaultGen Pro Login")
+    # Pulls from the 'Secrets' tab in the Streamlit dashboard
     master = st.secrets.get("PASSWORD", "admin123")
     entry = st.text_input("Master Password", type="password")
     if st.button("Unlock"):
         if entry == master:
-            st.session_state.auth = True; st.rerun()
-        else: st.error("Access Denied")
+            st.session_state.auth = True
+            st.rerun()
+        else: 
+            st.error("Access Denied")
     st.stop()
 
 # --- 7. MAIN INTERFACE ---
@@ -92,14 +104,17 @@ st.title("🔐 VaultGen Pro Dashboard")
 # Sidebar Configuration
 with st.sidebar:
     st.title("⚙️ Settings")
-    w_len = st.slider("Word Length", 4, 12, 6)
+    # Randomly choosing word between min (4) and max (12) word length
+    w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 8))
     w_num = st.slider("Word Count", 2, 5, 3)
     b_size = st.slider("Batch Size", 3, 10, 5)
     show_raw = st.checkbox("Show Plain Text", value=True)
     if st.button("Logout", use_container_width=True):
-        st.session_state.auth = False; st.rerun()
+        st.session_state.auth = False
+        st.rerun()
 
-current_pool = [w for w in all_words if len(w) == w_len]
+# Filter dictionary for selected range
+current_pool = [w for w in all_words if w_min <= len(w) <= w_max]
 pool_size = len(current_pool)
 
 # Action Buttons
@@ -111,9 +126,12 @@ if c_gen.button("🚀 Generate Passwords", use_container_width=True):
     
     for _ in range(b_size):
         selected = [random.choice(current_pool) for _ in range(w_num)]
+        # Capitalize one random word
         selected[random.randint(0, w_num-1)] = selected[random.randint(0, w_num-1)].upper()
+        # 5-digit number + special character
         num_suffix = f"{str(random.randint(0, 99999)).zfill(5)}{random.choice(specials)}"
         pwd = "-".join(selected + [num_suffix])
+        
         st.session_state.history.insert(0, {"pwd": pwd, "hint": generate_hint(pwd)})
         batch.append(pwd)
     
@@ -140,43 +158,36 @@ if st.session_state.passwords:
         st.subheader("📈 Security Trend")
         if len(st.session_state.strength_log) > 0:
             st.line_chart(st.session_state.strength_log)
-        else:
-            st.info("Generate passwords to see your security trend.")
 
     # --- 9. PASSWORD LIST ---
     st.divider()
     for i, pwd in enumerate(st.session_state.passwords):
         p_col, q_col, a_col, l_col = st.columns([3, 0.5, 1, 1])
-        color = "#DDA0DD" if i % 2 == 0 else "#90EE90"
+        color = "#DDA0DD" if i % 2 == 0 else "#90EE90" # Alternating Purple/Green
+        
         p_col.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:{color}; font-size:1.1rem;'>{pwd if show_raw else '●'*len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
-            # Create the QR code object
             qr = qrcode.QRCode(version=1, box_size=10, border=5)
             qr.add_data(pwd)
             qr.make(fit=True)
-    
-            # Create the image
             img = qr.make_image(fill_color="black", back_color="white")
-    
-            # Save it to a BytesIO buffer
             buf = BytesIO()
             img.save(buf, format="PNG")
-    
-            # Seek to the start of the buffer and display
             buf.seek(0)
-            st.image(buf, caption="Scan with your phone")
+            st.image(buf, caption="Scan for mobile")
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
             if leaks > 0: st.error(f"Leaked {leaks:,} times!")
-            else: st.success("Safe!")
+            elif leaks == 0: st.success("Safe!")
+            else: st.warning("API Offline")
 
         if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
             token = str(uuid.uuid4())
             st.session_state.one_time_vault[token] = pwd
-            st.info(f"One-time link token: {token}")
-            st.caption("Recipients access via: `?view=YOUR_TOKEN` appended to URL")
+            st.info(f"Token: {token}")
+            st.caption("Access via: `?view=TOKEN` appended to app URL")
 
 # --- 10. HISTORY ---
 if st.session_state.history:
