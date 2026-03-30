@@ -26,7 +26,7 @@ all_words = load_dictionary()
 
 # --- 3. SMART LOGIC & SECURITY FUNCTIONS ---
 def get_caps_indices(word_count):
-    """Ensures non-adjacent capitalization for better human readability and entropy."""
+    """Ensures non-adjacent capitalization for human readability and entropy."""
     if word_count == 2:
         return [random.randint(0, 1)]
     elif word_count == 3:
@@ -34,18 +34,20 @@ def get_caps_indices(word_count):
     elif word_count == 4:
         return random.choice([[0, 2], [0, 3], [1, 3]])
     elif word_count == 5:
-        return [0, 2, 4] if random.choice([2, 3]) == 3 else random.choice([[0, 2], [0, 3], [0, 4], [1, 3], [1, 4], [2, 4]])
+        if random.choice([2, 3]) == 3:
+            return [0, 2, 4]
+        return random.choice([[0, 2], [0, 3], [0, 4], [1, 3], [1, 4], [2, 4]])
     return [0]
 
 def generate_hint(password):
-    """Creates a cryptic hint for the history log to prevent shoulder-surfing."""
+    """Creates a cryptic hint for the session log."""
     parts = password.split("-")
     hint_parts = [f"[{len(p)}]{'UPPER' if p.isupper() else 'word'}" for p in parts[:-1]]
-    hint_parts.append(f"num+spec{len(parts[-1])}")
+    hint_parts.append(f"suffix{len(parts[-1])}")
     return " / ".join(hint_parts)
 
 def check_pwned(password):
-    """Checks HaveIBeenPwned API using privacy-preserving k-Anonymity."""
+    """Checks HaveIBeenPwned API using k-Anonymity privacy protocol."""
     sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     try:
@@ -68,8 +70,7 @@ def calculate_entropy_manual(password):
     return len(password) * math.log2(pool) if pool > 0 else 0
 
 def calculate_entropy(word_count, pool_size, digit_count, spec_count):
-    """Calculates entropy bits: Words + Digits + Specials."""
-    # 7 is the size of our specials list
+    """Calculates entropy bits: log2(Pool^Words * 10^Digits * 7^Specials)."""
     return (word_count * math.log2(max(pool_size, 1))) + math.log2(10**digit_count) + math.log2(7**spec_count)
 
 # --- 4. SESSION STATE ---
@@ -87,7 +88,7 @@ if "view" in st.query_params:
         st.balloons()
         st.success("### 🕵️ One-Time Secret Revealed")
         st.code(secret, language=None)
-        st.warning("Deleted from memory. This view cannot be accessed again.")
+        st.warning("Wiped from memory. This view cannot be accessed again.")
         if st.button("Home"): st.query_params.clear(); st.rerun()
         st.stop()
 
@@ -105,7 +106,6 @@ with st.sidebar:
     w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 11))
     w_num = st.slider("Word Count", 2, 5, 3)
     d_num = st.slider("Number of Digits", 2, 5, 5)
-    # NEW: Slider for number of special characters
     s_num = st.slider("Number of Specials", 1, 3, 1)
     b_size = st.slider("Batch Size", 3, 10, 5)
     show_raw = st.checkbox("Show Plain Text", value=True)
@@ -118,9 +118,9 @@ pool_size = len(current_pool)
 # --- 8. DASHBOARD UI ---
 st.title("🔐 VaultGen Pro Dashboard")
 
-# Manual Audit
+# Section: Manual Audit
 with st.expander("🔍 Check an Existing Password"):
-    test_pwd = st.text_input("Test existing password (not saved to history)", type="password")
+    test_pwd = st.text_input("Enter password to test (Not saved to history)", type="password")
     if test_pwd:
         c1, c2, c3 = st.columns(3)
         m_bits = calculate_entropy_manual(test_pwd)
@@ -129,6 +129,7 @@ with st.expander("🔍 Check an Existing Password"):
         if leaks > 0: c2.error(f"Leaked {leaks:,} times!")
         else: c2.success("No leaks found!")
         c3.info(f"Strength: {'Strong' if m_bits >= 80 else 'Moderate' if m_bits >= 60 else 'Weak'}")
+    st.caption("ℹ️ **Note on Entropy:** Manual checks use 'Character-Pool' logic (conservative), while generated passphrases use 'Dictionary-Pool' logic (precise).")
 
 st.divider()
 
@@ -141,11 +142,9 @@ if c_gen.button("🚀 Generate New Batch", use_container_width=True):
         selected = [random.choice(current_pool) for _ in range(w_num)]
         for idx in get_caps_indices(w_num): selected[idx] = selected[idx].upper()
         
-        # Numeric part
+        # Suffix: Digits with leading zeros + Multi-Specials
         max_v = (10**d_num) - 1
         num_part = str(random.randint(0, max_v)).zfill(d_num)
-        
-        # NEW: Multi-special character logic
         chosen_specials = "".join(random.choices(specials_list, k=s_num))
         
         pwd = "-".join(selected + [f"{num_part}{chosen_specials}"])
@@ -163,12 +162,13 @@ if st.session_state.passwords:
     st.divider()
     bits = calculate_entropy(w_num, pool_size, d_num, s_num)
     col_met, col_chart = st.columns([1, 2])
-    col_met.metric("Entropy", f"{int(bits)} bits")
-    crack_yrs = (2**bits/100e9/31536000)
-    col_met.metric("Crack Time", f"{crack_yrs:,.0f} yrs" if bits > 40 else "< 1 yr")
+    
+    with col_met:
+        st.metric("Entropy", f"{int(bits)} bits")
+        crack_yrs = (2**bits/100e9/31536000)
+        st.metric("Crack Time", f"{crack_yrs:,.0f} yrs" if bits > 40 else "< 1 yr")
     
     with col_chart: 
-        st.subheader("📈 Security Trend vs Benchmark")
         chart_df = pd.DataFrame({
             "Current Strength": st.session_state.strength_log,
             "NIST Target (80 bits)": [80] * len(st.session_state.strength_log)
@@ -203,15 +203,16 @@ if st.session_state.passwords:
         if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
             token = str(uuid.uuid4())
             st.session_state.one_time_vault[token] = pwd
-            st.info(f"Link: `?view={token}`")
+            st.info(f"Burn Token: {token}")
 
-# --- 11. HISTORY & TICKER ---
+# --- 11. FOOTER TICKER ---
 if st.session_state.history:
     with st.expander("📜 Secure Session Log (Hints Only)"):
         for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
+
 st.divider()
 st.info(random.choice([
     "💡 NIST Tip: Favor passphrases over complex short passwords.",
     "💡 Fact: Random capitalization significantly boosts entropy.",
-    "💡 Tip: Use a burn link to share secrets securely once."
+    "💡 Logic: 80+ bits of entropy is the 'gold standard' for modern security."
 ]))
