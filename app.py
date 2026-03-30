@@ -11,43 +11,65 @@ import math
 import pandas as pd
 
 # --- 1. PAGE CONFIGURATION ---
+# Sets the browser tab title, icon, and layout mode.
 st.set_page_config(page_title="VaultGen Pro", page_icon="🔐", layout="wide")
 
 # --- 2. DATA LOADING (CACHED) ---
+# @st.cache_resource ensures the dictionary is loaded once and shared across all users/sessions.
 @st.cache_resource
 def load_dictionary():
     try:
+        # Checks if the NLTK 'words' corpus is available, downloads if missing.
         nltk.data.find('corpora/words')
     except LookupError:
         nltk.download('words')
+    # Returns a list of lowercase, alphabetic words.
     return [w.lower() for w in words.words() if w.isalpha()]
 
 all_words = load_dictionary()
 
 # --- 3. SMART LOGIC & SECURITY FUNCTIONS ---
+
 def get_caps_indices(word_count):
-    """Ensures non-adjacent capitalization for human readability and entropy."""
+    """
+    Implements non-adjacent capitalization logic based on NIST standards.
+    This ensures that uppercase words are visually distinct and don't clump together,
+    which improves both memorability and entropy.
+    """
     if word_count == 2:
         return [random.randint(0, 1)]
     elif word_count == 3:
+        # Randomly choose 1 or 2 caps; if 2, they are forced to indices 0 and 2.
         return [random.randint(0, 2)] if random.choice([1, 2]) == 1 else [0, 2]
     elif word_count == 4:
+        # Picks pre-defined pairs of indices that are never side-by-side.
         return random.choice([[0, 2], [0, 3], [1, 3]])
     elif word_count == 5:
+        # Logic for 2 or 3 caps with at least one lowercase word separating them.
         if random.choice([2, 3]) == 3:
             return [0, 2, 4]
         return random.choice([[0, 2], [0, 3], [0, 4], [1, 3], [1, 4], [2, 4]])
     return [0]
 
 def generate_hint(password):
-    """Creates a cryptic hint for the session log."""
+    """
+    Creates a 'Zero-Knowledge' hint for the history log.
+    Converts 'apple-ORANGE-01!' into '[5]word / [6]UPPER / suffix3' 
+    to provide a memory trigger without revealing the actual password.
+    """
     parts = password.split("-")
     hint_parts = [f"[{len(p)}]{'UPPER' if p.isupper() else 'word'}" for p in parts[:-1]]
     hint_parts.append(f"suffix{len(parts[-1])}")
     return " / ".join(hint_parts)
 
 def check_pwned(password):
-    """Checks HaveIBeenPwned API using k-Anonymity privacy protocol."""
+    """
+    Uses k-Anonymity to check the HaveIBeenPwned API.
+    1. Hashes the password with SHA-1.
+    2. Sends only the first 5 characters of the hash to the API.
+    3. The API returns all matching suffixes, and we check locally for a match.
+    This prevents the password (or its full hash) from ever leaving your server.
+    """
     sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     try:
@@ -60,7 +82,10 @@ def check_pwned(password):
     except: return -1
 
 def calculate_entropy_manual(password):
-    """Estimates entropy for manual input based on character variety."""
+    """
+    Estimates entropy for manual input based on character variety (The 'Pool' size).
+    Entropy bits = Length * log2(Character Pool Size).
+    """
     if not password: return 0
     pool = 0
     if any(c.islower() for c in password): pool += 26
@@ -70,10 +95,15 @@ def calculate_entropy_manual(password):
     return len(password) * math.log2(pool) if pool > 0 else 0
 
 def calculate_entropy(word_count, pool_size, digit_count, spec_count):
-    """Calculates entropy bits: log2(Pool^Words * 10^Digits * 7^Specials)."""
+    """
+    Calculates precise entropy for generated passphrases.
+    Bits = log2(WordPool^Count * DigitPool^Count * SpecialPool^Count).
+    """
     return (word_count * math.log2(max(pool_size, 1))) + math.log2(10**digit_count) + math.log2(7**spec_count)
 
 # --- 4. SESSION STATE ---
+# Initializes persistent storage for the current browser session.
+# Data here is lost if the tab is closed, ensuring maximum privacy.
 for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
     if key not in st.session_state:
         if key == 'auth': st.session_state[key] = False
@@ -81,9 +111,11 @@ for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
         else: st.session_state[key] = {}
 
 # --- 5. ONE-TIME LINK HANDLER ---
+# Checks the URL for the '?view=' parameter to reveal a 'Burn Link' secret.
 if "view" in st.query_params:
     token = st.query_params["view"]
     if token in st.session_state.one_time_vault:
+        # Retrieves and deletes the secret simultaneously (Self-destruct logic).
         secret = st.session_state.one_time_vault.pop(token)
         st.balloons()
         st.success("### 🕵️ One-Time Secret Revealed")
@@ -93,6 +125,7 @@ if "view" in st.query_params:
         st.stop()
 
 # --- 6. LOGIN ---
+# Basic gatekeeper using Streamlit Secrets for the Master Password.
 if not st.session_state.auth:
     st.title("🔒 VaultGen Pro Access")
     master = st.secrets.get("PASSWORD", "admin123")
@@ -112,6 +145,7 @@ with st.sidebar:
     if st.button("Logout", use_container_width=True): 
         st.session_state.auth = False; st.rerun()
 
+# Filters the dictionary based on the user's length preferences in the sidebar.
 current_pool = [w for w in all_words if w_min <= len(w) <= w_max]
 pool_size = len(current_pool)
 
@@ -139,15 +173,20 @@ if c_gen.button("🚀 Generate New Batch", use_container_width=True):
     batch = []
     specials_list = ['!', '@', '#', '$', '%', '&', '*']
     for _ in range(b_size):
+        # Pick words randomly from the dictionary pool.
         selected = [random.choice(current_pool) for _ in range(w_num)]
+        # Apply the non-adjacent capitalization rules.
         for idx in get_caps_indices(w_num): selected[idx] = selected[idx].upper()
         
-        # Suffix: Digits with leading zeros + Multi-Specials
+        # Numeric suffix: calculates the max value based on digit count and pads with zeros (zfill).
         max_v = (10**d_num) - 1
         num_part = str(random.randint(0, max_v)).zfill(d_num)
+        # Randomly picks multiple special characters from the allowed list.
         chosen_specials = "".join(random.choices(specials_list, k=s_num))
         
+        # Join words with hyphens and append the numeric/special suffix.
         pwd = "-".join(selected + [f"{num_part}{chosen_specials}"])
+        # Log to the session history.
         st.session_state.history.insert(0, {"pwd": pwd, "hint": generate_hint(pwd)})
         batch.append(pwd)
     
@@ -165,10 +204,12 @@ if st.session_state.passwords:
     
     with col_met:
         st.metric("Entropy", f"{int(bits)} bits")
+        # Estimate crack time based on 100 billion guesses per second.
         crack_yrs = (2**bits/100e9/31536000)
         st.metric("Crack Time", f"{crack_yrs:,.0f} yrs" if bits > 40 else "< 1 yr")
     
     with col_chart: 
+        # Plots the entropy trend compared to the 80-bit NIST standard line.
         chart_df = pd.DataFrame({
             "Current Strength": st.session_state.strength_log,
             "NIST Target (80 bits)": [80] * len(st.session_state.strength_log)
@@ -180,20 +221,21 @@ if st.session_state.passwords:
     for i, pwd in enumerate(st.session_state.passwords):
         p_col, q_col, a_col, l_col = st.columns([3, 0.5, 1, 1])
         color = "#DDA0DD" if i % 2 == 0 else "#90EE90"
-        p_col.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:{color};'>{pwd if show_raw else '●'*len(pwd)}</code></div>", unsafe_allow_html=True)
+        p_col.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:{color};'>{pwd if show_raw else '●' * len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
             tab_copy, tab_sms = st.tabs(["Copy", "SMS"])
             with tab_copy:
                 buf = BytesIO()
                 qrcode.make(pwd).save(buf, format="PNG")
-                st.image(buf)
+                st.image(buf, caption="Scan to copy")
             with tab_sms:
                 phone = st.text_input("Number", placeholder="+123456789", key=f"sms_{i}")
+                # Creates a standard SMS URI that mobile devices recognize.
                 sms_uri = f"sms:{phone}?body=VaultGen Password: {pwd}"
                 buf_s = BytesIO()
                 qrcode.make(sms_uri).save(buf_s, format="PNG")
-                st.image(buf_s)
+                st.image(buf_s, caption="Scan to send text")
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
@@ -201,6 +243,7 @@ if st.session_state.passwords:
             else: st.success("Safe!")
 
         if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
+            # Generates a unique UUID token for sharing a secret one-time view.
             token = str(uuid.uuid4())
             st.session_state.one_time_vault[token] = pwd
             st.info(f"Burn Token: {token}")
@@ -208,9 +251,11 @@ if st.session_state.passwords:
 # --- 11. FOOTER TICKER ---
 if st.session_state.history:
     with st.expander("📜 Secure Session Log (Hints Only)"):
+        # Display only hints to keep the cleartext history secure.
         for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
 
 st.divider()
+# Cycles through random NIST and security advice tips.
 st.info(random.choice([
     "💡 NIST Tip: Favor passphrases over complex short passwords.",
     "💡 Fact: Random capitalization significantly boosts entropy.",
