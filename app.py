@@ -85,7 +85,6 @@ def calculate_entropy_manual(password):
     """
     Estimates entropy for manual input based on the variety of characters used.
     Formula: Bits = Length * log2(Character Pool Size).
-    Character Pool size increases as lowercase, uppercase, digits, and symbols are detected.
     """
     if not password: return 0
     pool = 0
@@ -99,34 +98,17 @@ def calculate_entropy(word_count, pool_size, digit_count, spec_count):
     """
     Calculates precise mathematical entropy for dictionary-based passphrases.
     Formula: log2(WordPool^Count * DigitPool^Count * SpecialPool^Count).
-    This is the standard metric for measuring resistance to brute-force attacks.
     """
     return (word_count * math.log2(max(pool_size, 1))) + math.log2(10**digit_count) + math.log2(18**spec_count)
 
 # --- 4. SESSION STATE INITIALIZATION ---
 # Session state persists data as long as the browser tab is open.
-# Streamlit clears this data if the tab is closed, ensuring high ephemeral privacy.
-for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
+for key in ['auth', 'history', 'passwords', 'strength_log']:
     if key not in st.session_state:
         if key == 'auth': st.session_state[key] = False
         elif key in ['history', 'passwords', 'strength_log']: st.session_state[key] = []
-        else: st.session_state[key] = {}
 
-# --- 5. ONE-TIME LINK HANDLER ---
-# Checks for the '?view=' parameter in the URL to reveal a 'Burn Link' password.
-if "view" in st.query_params:
-    token = st.query_params["view"]
-    if token in st.session_state.one_time_vault:
-        # Retrieves and immediately DELETES the secret from memory (Self-destruct logic).
-        secret = st.session_state.one_time_vault.pop(token)
-        st.balloons()
-        st.success("### 🕵️ One-Time Secret Revealed")
-        st.code(secret, language=None)
-        st.warning("Wiped from memory. This secret cannot be accessed again.")
-        if st.button("Back to Home"): st.query_params.clear(); st.rerun()
-        st.stop()
-
-# --- 6. AUTHENTICATION ---
+# --- 5. AUTHENTICATION ---
 # Gatekeeper using Streamlit Secrets. Access is denied unless the Master Password matches.
 if not st.session_state.auth:
     st.title("🔒 VaultGen Pro Access")
@@ -135,7 +117,7 @@ if not st.session_state.auth:
         if st.button("Unlock"): st.session_state.auth = True; st.rerun()
     st.stop()
 
-# --- 7. SIDEBAR & USER CONTROLS ---
+# --- 6. SIDEBAR & USER CONTROLS ---
 with st.sidebar:
     st.title("⚙️ Settings")
     w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 11))
@@ -151,7 +133,7 @@ with st.sidebar:
 current_pool = [w for w in all_words if w_min <= len(w) <= w_max]
 pool_size = len(current_pool)
 
-# --- 8. DASHBOARD UI ---
+# --- 7. DASHBOARD UI ---
 st.title("🔐 VaultGen Pro Dashboard")
 
 # Section: Manual Strength Audit
@@ -200,7 +182,7 @@ if c_gen.button("🚀 Generate New Batch", use_container_width=True):
 if c_clr.button("🗑️ Reset Display", use_container_width=True):
     st.session_state.passwords = []; st.rerun()
 
-# --- 9. ANALYTICS ---
+# --- 8. ANALYTICS ---
 if st.session_state.passwords:
     st.divider()
     bits = calculate_entropy(w_num, pool_size, d_num, s_num)
@@ -208,7 +190,6 @@ if st.session_state.passwords:
     
     with col_met:
         st.metric("Entropy", f"{int(bits)} bits")
-        # Estimate crack time based on 100 billion guesses per second.
         crack_yrs = (2**bits/100e9/31536000)
         st.metric("Crack Time", f"{crack_yrs:,.0f} yrs" if bits > 40 else "< 1 yr")
     
@@ -218,27 +199,19 @@ if st.session_state.passwords:
             "Current Strength": st.session_state.strength_log,
             "NIST Target (80 bits)": [80] * len(st.session_state.strength_log)
         })
-        st.line_chart(chart_df, color=["#DDA0DD", "#90EE90"])
+        st.line_chart(chart_df)
 
-    # --- 10. PASSWORD DISPLAY & INTERACTIVE TOOLS ---
+    # --- 9. PASSWORD DISPLAY & INTERACTIVE TOOLS ---
     st.divider()
     for i, pwd in enumerate(st.session_state.passwords):
-        p_col, q_col, a_col, l_col = st.columns([3, 0.5, 1, 1])
-        
-        # Determine alternating color (Purple for even rows, Green for odd rows)
-        hex_color = "#DDA0DD" if i % 2 == 0 else "#90EE90"
+        p_col, q_col, a_col = st.columns([3, 0.5, 1])
         
         with p_col:
             if show_raw:
-                # Vertical colored bar and label to restore alternating color aesthetic
-                st.markdown(f"""
-                    <div style="border-left: 5px solid {hex_color}; padding-left: 10px; margin-bottom: -35px;">
-                        <small style="color: {hex_color}; font-family: monospace; font-weight: bold;">PASS {i+1}</small>
-                    </div>
-                """, unsafe_allow_html=True)
+                # Standard Streamlit code block with built-in copy button.
                 st.code(pwd, language=None)
             else:
-                st.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px; border-left: 5px solid {hex_color};'><code style='color:{hex_color};'>{'●' * len(pwd)}</code></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:#ffffff;'>{'●' * len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
             tab_copy, tab_sms = st.tabs(["Copy", "SMS"])
@@ -248,29 +221,24 @@ if st.session_state.passwords:
                 st.image(buf, caption="Scan to copy")
             with tab_sms:
                 phone = st.text_input("Number", placeholder="+123456789", key=f"sms_{i}")
+                # standard SMS URI protocol for mobile triggers.
                 sms_uri = f"sms:{phone}?body=VaultGen Password: {pwd}"
                 buf_s = BytesIO()
                 qrcode.make(sms_uri).save(buf_s, format="PNG")
-                st.image(buf_s, caption="Scan to send text")
+                st.image(buf_s, caption="Scan to text")
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
             if leaks > 0: st.error(f"Leaked {leaks:,} times!")
             else: st.success("Safe!")
 
-        if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
-            token = str(uuid.uuid4())
-            st.session_state.one_time_vault[token] = pwd
-            st.info(f"Burn Token: {token}")
-
-# --- 11. FOOTER TICKER ---
+# --- 10. FOOTER TICKER ---
 if st.session_state.history:
     with st.expander("📜 Secure Session Log (Hints Only)"):
-        # Display structural clues only to avoid exposing sensitive cleartext in the UI log.
+        # Shows structural clues only to avoid exposing sensitive cleartext in the UI log.
         for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
 
 st.divider()
-# Ticker for security education tips.
 st.info(random.choice([
     "💡 NIST Tip: Favor passphrases over complex short passwords.",
     "💡 Fact: Random capitalization significantly boosts entropy.",
