@@ -11,7 +11,7 @@ import math
 import pandas as pd
 
 # --- 1. PAGE CONFIGURATION ---
-# Sets browser metadata and forces the UI to use the full horizontal width.
+# Sets browser metadata and forces the UI to use the full horizontal width of the screen.
 st.set_page_config(page_title="VaultGen Pro", page_icon="🔐", layout="wide")
 
 # --- 2. DATA LOADING (CACHED) ---
@@ -32,9 +32,9 @@ all_words = load_dictionary()
 
 def get_caps_indices(word_count):
     """
-    Implements non-adjacent capitalization logic based on NIST recommendations.
+    Implements non-adjacent capitalization logic based on NIST security recommendations.
     Ensures that uppercase words are separated by at least one lowercase word.
-    This increases visual distinctiveness and complexity without harming human memorability.
+    This increases visual distinctiveness and entropy without harming human memorability.
     """
     if word_count == 2:
         return [random.randint(0, 1)]
@@ -166,7 +166,7 @@ with st.expander("🔍 Check an Existing Password"):
         else: c2.success("No leaks found!")
         strength_eval = 'Strong' if m_bits >= 80 else 'Moderate' if m_bits >= 60 else 'Weak'
         c3.info(f"Strength: {strength_eval}")
-    st.caption("ℹ️ **Note on Entropy:** Manual checks use character logic; generated phrases use dictionary logic.")
+    st.caption("ℹ️ **Note on Entropy:** Manual checks use conservative character logic; generated phrases use precise dictionary logic.")
 
 st.divider()
 
@@ -208,7 +208,7 @@ if st.session_state.passwords:
     
     with col_met:
         st.metric("Entropy", f"{int(bits)} bits")
-        # Cracking estimation assuming 100 billion guesses per second.
+        # Estimate crack time based on 100 billion guesses per second.
         crack_yrs = (2**bits/100e9/31536000)
         st.metric("Crack Time", f"{crack_yrs:,.0f} yrs" if bits > 40 else "< 1 yr")
     
@@ -225,12 +225,12 @@ if st.session_state.passwords:
     for i, pwd in enumerate(st.session_state.passwords):
         p_col, q_col, a_col, l_col = st.columns([3, 0.5, 1, 1])
         
-        # Alternating visual hierarchy (Purple for even rows, Green for odd).
+        # Determine alternating color (Purple for even rows, Green for odd rows)
         hex_color = "#DDA0DD" if i % 2 == 0 else "#90EE90"
         
         with p_col:
             if show_raw:
-                # Vertical color bar + Label + st.code (for built-in Copy button).
+                # Vertical colored bar and label to restore alternating color aesthetic
                 st.markdown(f"""
                     <div style="border-left: 5px solid {hex_color}; padding-left: 10px; margin-bottom: -35px;">
                         <small style="color: {hex_color}; font-family: monospace; font-weight: bold;">PASS {i+1}</small>
@@ -238,7 +238,6 @@ if st.session_state.passwords:
                 """, unsafe_allow_html=True)
                 st.code(pwd, language=None)
             else:
-                # Masked display for sensitive environments.
                 st.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px; border-left: 5px solid {hex_color};'><code style='color:{hex_color};'>{'●' * len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
@@ -249,11 +248,10 @@ if st.session_state.passwords:
                 st.image(buf, caption="Scan to copy")
             with tab_sms:
                 phone = st.text_input("Number", placeholder="+123456789", key=f"sms_{i}")
-                # standard SMS URI protocol for mobile triggers.
                 sms_uri = f"sms:{phone}?body=VaultGen Password: {pwd}"
                 buf_s = BytesIO()
                 qrcode.make(sms_uri).save(buf_s, format="PNG")
-                st.image(buf_s, caption="Scan to text")
+                st.image(buf_s, caption="Scan to send text")
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
@@ -261,7 +259,6 @@ if st.session_state.passwords:
             else: st.success("Safe!")
 
         if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
-            # Generates unique UUID for sharing a passphrase via one-time link.
             token = str(uuid.uuid4())
             st.session_state.one_time_vault[token] = pwd
             st.info(f"Burn Token: {token}")
@@ -269,7 +266,7 @@ if st.session_state.passwords:
 # --- 11. FOOTER TICKER ---
 if st.session_state.history:
     with st.expander("📜 Secure Session Log (Hints Only)"):
-        # Shows structural clues only to avoid exposing sensitive cleartext in the UI log.
+        # Display structural clues only to avoid exposing sensitive cleartext in the UI log.
         for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
 
 st.divider()
