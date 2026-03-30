@@ -151,7 +151,21 @@ if st.session_state.passwords:
         p_col.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:{color}; font-size:1.1rem;'>{pwd if show_raw else '●'*len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
-            st.image(BytesIO(qrcode.make(pwd).tobytes()))
+            # Create the QR code object
+            qr = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr.add_data(pwd)
+            qr.make(fit=True)
+    
+            # Create the image
+            img = qr.make_image(fill_color="black", back_color="white")
+    
+            # Save it to a BytesIO buffer
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+    
+            # Seek to the start of the buffer and display
+            buf.seek(0)
+            st.image(buf, caption="Scan with your phone")
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
