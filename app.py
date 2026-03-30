@@ -8,12 +8,12 @@ import uuid
 import hashlib
 import requests
 import math
-import pandas as pd  # For the security trend graph
+import pandas as pd
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="VaultGen Pro", page_icon="🔐", layout="wide")
 
-# --- 2. DATA LOADING (CACHED) ---
+# --- 2. DATA LOADING ---
 @st.cache_resource
 def load_dictionary():
     try:
@@ -24,22 +24,29 @@ def load_dictionary():
 
 all_words = load_dictionary()
 
-# --- 3. SECURITY & UTILITY FUNCTIONS ---
+# --- 3. SMART LOGIC FUNCTIONS ---
+def get_caps_indices(word_count):
+    """Rules for non-adjacent capitalization."""
+    indices = list(range(word_count))
+    if word_count == 2:
+        return [random.choice(indices)]
+    elif word_count == 3:
+        return [random.choice(indices)] if random.choice([1, 2]) == 1 else [0, 2]
+    elif word_count == 4:
+        return random.choice([[0, 2], [0, 3], [1, 3]])
+    elif word_count == 5:
+        if random.choice([2, 3]) == 3:
+            return [0, 2, 4]
+        return random.choice([[0, 2], [0, 3], [0, 4], [1, 3], [1, 4], [2, 4]])
+    return [0]
+
 def generate_hint(password):
-    """Converts a password into a cryptic hint based on word lengths."""
     parts = password.split("-")
-    hint_parts = []
-    for part in parts:
-        if part.isdigit() or (any(c.isdigit() for c in part) and any(not c.isalnum() for c in part)):
-            hint_parts.append(f"num{len(part)}")
-        elif part.isupper():
-            hint_parts.append(f"[{len(part)}]UPPER")
-        else:
-            hint_parts.append(f"[{len(part)}]word")
+    hint_parts = [f"[{len(p)}]{'UPPER' if p.isupper() else 'word'}" for p in parts[:-1]]
+    hint_parts.append(f"num{len(parts[-1])}")
     return " / ".join(hint_parts)
 
 def check_pwned(password):
-    """Checks HaveIBeenPwned API using k-Anonymity (SHA-1 prefix)."""
     sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     try:
@@ -52,149 +59,114 @@ def check_pwned(password):
     except: return -1
 
 def calculate_entropy(word_count, pool_size):
-    """Calculates bits of entropy: log2(pool^count) + log2(number_pool) + log2(special_pool)."""
-    # 100,000 for 5-digit number, 7 for special characters used
-    return (word_count * math.log2(pool_size)) + math.log2(100000) + math.log2(7)
+    return (word_count * math.log2(max(pool_size, 1))) + math.log2(100000) + math.log2(7)
 
 # --- 4. SESSION STATE ---
-if 'auth' not in st.session_state: st.session_state.auth = False
-if 'history' not in st.session_state: st.session_state.history = []
-if 'passwords' not in st.session_state: st.session_state.passwords = []
-if 'one_time_vault' not in st.session_state: st.session_state.one_time_vault = {}
-if 'strength_log' not in st.session_state: st.session_state.strength_log = []
+for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
+    if key not in st.session_state:
+        if key == 'auth': st.session_state[key] = False
+        elif key in ['history', 'passwords', 'strength_log']: st.session_state[key] = []
+        else: st.session_state[key] = {}
 
 # --- 5. ONE-TIME LINK HANDLER ---
-params = st.query_params
-if "view" in params:
-    token = params["view"]
+if "view" in st.query_params:
+    token = st.query_params["view"]
     if token in st.session_state.one_time_vault:
         secret = st.session_state.one_time_vault.pop(token)
         st.balloons()
         st.success("### 🕵️ One-Time Secret Revealed")
         st.code(secret, language=None)
-        st.warning("Deleted from memory. This view cannot be accessed again.")
-        if st.button("Home"): 
-            st.query_params.clear()
-            st.rerun()
+        st.warning("Deleted from memory. This cannot be viewed again.")
+        if st.button("Home"): st.query_params.clear(); st.rerun()
         st.stop()
     else:
-        st.error("Invalid or expired link.")
-        if st.button("Home"): 
-            st.query_params.clear()
-            st.rerun()
-        st.stop()
+        st.error("Invalid link."); st.stop()
 
-# --- 6. MASTER PASSWORD LOGIN ---
+# --- 6. LOGIN ---
 if not st.session_state.auth:
     st.title("🔒 VaultGen Pro Login")
-    # Pulls from the 'Secrets' tab in the Streamlit dashboard
     master = st.secrets.get("PASSWORD", "admin123")
-    entry = st.text_input("Master Password", type="password")
-    if st.button("Unlock"):
-        if entry == master:
-            st.session_state.auth = True
-            st.rerun()
-        else: 
-            st.error("Access Denied")
+    if st.text_input("Master Password", type="password") == master:
+        if st.button("Unlock"): st.session_state.auth = True; st.rerun()
     st.stop()
 
-# --- 7. MAIN INTERFACE ---
-st.title("🔐 VaultGen Pro Dashboard")
-
-# Sidebar Configuration
+# --- 7. UI SETTINGS ---
 with st.sidebar:
     st.title("⚙️ Settings")
-    # Randomly choosing word between min (4) and max (12) word length
-    w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 8))
+    w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 11))
     w_num = st.slider("Word Count", 2, 5, 3)
     b_size = st.slider("Batch Size", 3, 10, 5)
     show_raw = st.checkbox("Show Plain Text", value=True)
-    if st.button("Logout", use_container_width=True):
+    if st.button("Logout", use_container_width=True): 
         st.session_state.auth = False
         st.rerun()
 
-# Filter dictionary for selected range
 current_pool = [w for w in all_words if w_min <= len(w) <= w_max]
 pool_size = len(current_pool)
 
-# Action Buttons
+# --- 8. GENERATION ---
+st.title("🔐 VaultGen Pro Dashboard")
 c_gen, c_clr = st.columns(2)
+
 if c_gen.button("🚀 Generate Passwords", use_container_width=True):
     batch = []
     specials = ['!', '@', '#', '$', '%', '&', '*']
-    entropy_val = calculate_entropy(w_num, pool_size)
-    
     for _ in range(b_size):
         selected = [random.choice(current_pool) for _ in range(w_num)]
-        # Capitalize one random word
-        selected[random.randint(0, w_num-1)] = selected[random.randint(0, w_num-1)].upper()
-        # 5-digit number + special character
-        num_suffix = f"{str(random.randint(0, 99999)).zfill(5)}{random.choice(specials)}"
-        pwd = "-".join(selected + [num_suffix])
-        
+        for idx in get_caps_indices(w_num): selected[idx] = selected[idx].upper()
+        suffix = f"{str(random.randint(0, 99999)).zfill(5)}{random.choice(specials)}"
+        pwd = "-".join(selected + [suffix])
         st.session_state.history.insert(0, {"pwd": pwd, "hint": generate_hint(pwd)})
         batch.append(pwd)
-    
     st.session_state.passwords = batch
-    st.session_state.strength_log.append(entropy_val)
+    st.session_state.strength_log.append(calculate_entropy(w_num, pool_size))
 
 if c_clr.button("🗑️ Reset Display", use_container_width=True):
-    st.session_state.passwords = []
-    st.rerun()
+    st.session_state.passwords = []; st.rerun()
 
-# --- 8. STRENGTH ANALYTICS ---
+# --- 9. ANALYTICS ---
 if st.session_state.passwords:
     st.divider()
     bits = calculate_entropy(w_num, pool_size)
-    years = (2**bits / 100_000_000_000) / (3600 * 24 * 365)
+    col_met, col_chart = st.columns([1, 2])
     
-    col_a, col_b = st.columns([1, 2])
-    with col_a:
-        st.subheader("📊 Current Specs")
-        st.metric("Entropy", f"{int(bits)} bits")
-        st.metric("Crack Time", f"{int(years):,} yrs" if years > 1 else "< 1 yr")
+    col_met.metric("Entropy", f"{int(bits)} bits")
+    col_met.metric("Crack Time", f"{(2**bits/100e9/31536000):,.0f} yrs" if bits > 40 else "< 1 yr")
     
-    with col_b:
-        st.subheader("📈 Security Trend")
-        if len(st.session_state.strength_log) > 0:
-            st.line_chart(st.session_state.strength_log)
+    with col_chart: 
+        st.subheader("📈 Security Trend vs Benchmark")
+        # Creating a comparison dataframe
+        chart_data = pd.DataFrame({
+            "Current Strength": st.session_state.strength_log,
+            "NIST Target (80 bits)": [80] * len(st.session_state.strength_log)
+        })
+        st.line_chart(chart_data, color=["#DDA0DD", "#90EE90"])
 
-    # --- 9. PASSWORD LIST ---
     st.divider()
     for i, pwd in enumerate(st.session_state.passwords):
         p_col, q_col, a_col, l_col = st.columns([3, 0.5, 1, 1])
-        color = "#DDA0DD" if i % 2 == 0 else "#90EE90" # Alternating Purple/Green
-        
+        color = "#DDA0DD" if i % 2 == 0 else "#90EE90"
         p_col.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:{color}; font-size:1.1rem;'>{pwd if show_raw else '●'*len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
-            qr = qrcode.QRCode(version=1, box_size=10, border=5)
-            qr.add_data(pwd)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
             buf = BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
-            st.image(buf, caption="Scan for mobile")
+            qrcode.make(pwd).save(buf, format="PNG")
+            st.image(buf)
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
             if leaks > 0: st.error(f"Leaked {leaks:,} times!")
-            elif leaks == 0: st.success("Safe!")
-            else: st.warning("API Offline")
+            else: st.success("Safe!")
 
         if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
             token = str(uuid.uuid4())
             st.session_state.one_time_vault[token] = pwd
-            st.info(f"Token: {token}")
-            st.caption("Access via: `?view=TOKEN` appended to app URL")
+            st.info(f"Link: `?view={token}`")
 
 # --- 10. HISTORY ---
 if st.session_state.history:
-    st.divider()
     with st.expander("📜 Secure Session Log (Hints Only)"):
-        for item in st.session_state.history[:10]:
-            st.write(f"Clue: {item['hint']}")
-        if st.checkbox("Download Full Plaintext History"):
-            h_raw = "\n".join([x['pwd'] for x in st.session_state.history])
-            st.download_button("💾 Download .txt", h_raw, file_name="vault_history.txt")
+        for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
+        if st.checkbox("Download History"):
+            txt = "\n".join([x['pwd'] for x in st.session_state.history])
+            st.download_button("💾 Download .txt", txt, file_name="vault_history.txt")
