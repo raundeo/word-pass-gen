@@ -167,7 +167,7 @@ st.divider()
 c_gen, c_clr = st.columns(2)
 if c_gen.button("🚀 Generate New Batch", use_container_width=True):
     batch = []
-    specials_list = ['!', '@', '#', '$', '%', '&', '*']
+    specials_list = ['!', '@', '#', '$', '%', '&', '?', '*', '^', '=', '+', '`', '~' ,'<', '>', ':', ';', '|']
     for _ in range(b_size):
         # Pick words randomly from dictionary pool.
         selected = [random.choice(current_pool) for _ in range(w_num)]
