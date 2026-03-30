@@ -11,19 +11,19 @@ import math
 import pandas as pd
 
 # --- 1. PAGE CONFIGURATION ---
-# Sets browser metadata and forces the UI to use the full horizontal width of the screen.
+# Configures the browser tab title, favicon, and forces a wide-screen layout.
 st.set_page_config(page_title="VaultGen Pro", page_icon="🔐", layout="wide")
 
 # --- 2. DATA LOADING (CACHED) ---
-# @st.cache_resource ensures the dictionary is loaded into memory only once per server restart.
+# @st.cache_resource saves the dictionary in memory so it's only loaded once per server life-cycle.
 @st.cache_resource
 def load_dictionary():
     try:
-        # Verifies if the NLTK 'words' corpus is available; downloads it if missing.
+        # Attempts to find the NLTK 'words' corpus; downloads it if it's the first run.
         nltk.data.find('corpora/words')
     except LookupError:
         nltk.download('words')
-    # Filters the corpus to return only lowercase, alphabetic words.
+    # Returns a list of lowercase, alphabetic words for the passphrase pool.
     return [w.lower() for w in words.words() if w.isalpha()]
 
 all_words = load_dictionary()
@@ -32,20 +32,20 @@ all_words = load_dictionary()
 
 def get_caps_indices(word_count):
     """
-    Implements non-adjacent capitalization logic based on NIST recommendations.
-    Ensures that uppercase words are separated by at least one lowercase word.
-    This increases visual distinctiveness and complexity without harming memorability.
+    Implements non-adjacent capitalization logic based on NIST security standards.
+    This ensures that uppercase words are never side-by-side, which improves 
+    visual distinctiveness and entropy without making the phrase harder to remember.
     """
     if word_count == 2:
         return [random.randint(0, 1)]
     elif word_count == 3:
-        # Randomly choose 1 or 2 caps; if 2, they are forced to indices 0 and 2.
+        # Returns one random index or two indices (0 and 2) to ensure a gap.
         return [random.randint(0, 2)] if random.choice([1, 2]) == 1 else [0, 2]
     elif word_count == 4:
-        # Picks pre-defined index pairs that are never side-by-side.
+        # Pre-defined pairs that are never adjacent.
         return random.choice([[0, 2], [0, 3], [1, 3]])
     elif word_count == 5:
-        # Allows for 2 or 3 caps, ensuring no two caps are adjacent.
+        # Logic for 2 or 3 caps, maintaining at least one lowercase word between them.
         if random.choice([2, 3]) == 3:
             return [0, 2, 4]
         return random.choice([[0, 2], [0, 3], [0, 4], [1, 3], [1, 4], [2, 4]])
@@ -53,9 +53,9 @@ def get_caps_indices(word_count):
 
 def generate_hint(password):
     """
-    Creates a 'Zero-Knowledge' hint for the session history log.
-    Converts a real password into a structural clue (e.g., [5]word / [6]UPPER).
-    This helps the user remember the structure without storing the actual secret.
+    Generates a 'Zero-Knowledge' structural hint for the session history.
+    Instead of 'apple-ORANGE-12!', it stores '[5]word / [6]UPPER / suffix3'.
+    This allows users to recall their structure without the server storing the secret.
     """
     parts = password.split("-")
     hint_parts = [f"[{len(p)}]{'UPPER' if p.isupper() else 'word'}" for p in parts[:-1]]
@@ -64,11 +64,11 @@ def generate_hint(password):
 
 def check_pwned(password):
     """
-    Checks the HaveIBeenPwned API using the k-Anonymity privacy protocol.
+    Audits the password against the 'Have I Been Pwned' database using k-Anonymity.
     1. Hashes the password with SHA-1.
     2. Sends ONLY the first 5 characters of the hash to the API.
-    3. The API returns all matching hash suffixes; we check for a match locally.
-    This confirms if a password is leaked without ever exposing the password to the internet.
+    3. The API returns all matching suffixes; we check for a match locally.
+    This confirms breaches without ever exposing the password to the internet.
     """
     sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
@@ -83,9 +83,9 @@ def check_pwned(password):
 
 def calculate_entropy_manual(password):
     """
-    Estimates entropy for manual input based on the variety of characters used.
+    Estimates entropy for manual user input based on character variety.
     Formula: Bits = Length * log2(Character Pool Size).
-    Character Pool varies based on presence of lowercase, uppercase, digits, and symbols.
+    Character Pool size increases as lowercase, uppercase, digits, and symbols are detected.
     """
     if not password: return 0
     pool = 0
@@ -97,15 +97,15 @@ def calculate_entropy_manual(password):
 
 def calculate_entropy(word_count, pool_size, digit_count, spec_count):
     """
-    Calculates precise entropy for generated passphrases.
-    Bits = log2(WordPool^Count * DigitPool^Count * SpecialPool^Count).
-    This is more accurate for passphrases than character-based estimation.
+    Calculates precise mathematical entropy for dictionary-based passphrases.
+    Formula: log2(WordPool^Count * DigitPool^Count * SpecialPool^Count).
+    This is the standard metric for measuring resistance to brute-force attacks.
     """
     return (word_count * math.log2(max(pool_size, 1))) + math.log2(10**digit_count) + math.log2(18**spec_count)
 
-# --- 4. SESSION STATE ---
-# Initializes storage for the current browser session. 
-# Streamlit clears this data if the tab is closed, ensuring no permanent local logs exist.
+# --- 4. SESSION STATE INITIALIZATION ---
+# Session state persists data as long as the browser tab is open.
+# Streamlit clears this on refresh or tab close, providing high ephemeral privacy.
 for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
     if key not in st.session_state:
         if key == 'auth': st.session_state[key] = False
@@ -113,21 +113,21 @@ for key in ['auth', 'history', 'passwords', 'one_time_vault', 'strength_log']:
         else: st.session_state[key] = {}
 
 # --- 5. ONE-TIME LINK HANDLER ---
-# Listens for the '?view=' URL parameter to reveal a 'Burn Link' secret.
+# Checks for the '?view=' parameter in the URL to reveal a 'Burn Link' password.
 if "view" in st.query_params:
     token = st.query_params["view"]
     if token in st.session_state.one_time_vault:
-        # Retrieves and immediately DELETES the secret from memory (Self-destruct logic).
+        # Pop() retrieves the value and DELETES it from memory immediately.
         secret = st.session_state.one_time_vault.pop(token)
         st.balloons()
         st.success("### 🕵️ One-Time Secret Revealed")
         st.code(secret, language=None)
-        st.warning("Wiped from memory. This view cannot be accessed again.")
-        if st.button("Home"): st.query_params.clear(); st.rerun()
+        st.warning("Deleted from memory. This secret cannot be accessed again.")
+        if st.button("Back to Home"): st.query_params.clear(); st.rerun()
         st.stop()
 
-# --- 6. LOGIN ---
-# Gatekeeper using Streamlit Secrets. Access is denied without the Master Password.
+# --- 6. AUTHENTICATION ---
+# Gatekeeper using Streamlit Secrets. Access is denied unless the Master Password matches.
 if not st.session_state.auth:
     st.title("🔒 VaultGen Pro Access")
     master = st.secrets.get("PASSWORD", "admin123")
@@ -135,7 +135,7 @@ if not st.session_state.auth:
         if st.button("Unlock"): st.session_state.auth = True; st.rerun()
     st.stop()
 
-# --- 7. SIDEBAR ---
+# --- 7. SIDEBAR & USER CONTROLS ---
 with st.sidebar:
     st.title("⚙️ Settings")
     w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 11))
@@ -147,14 +147,14 @@ with st.sidebar:
     if st.button("Logout", use_container_width=True): 
         st.session_state.auth = False; st.rerun()
 
-# Pre-filters the dictionary based on the user's length preferences in the sidebar.
+# Filters the dictionary pool based on the user's word length constraints.
 current_pool = [w for w in all_words if w_min <= len(w) <= w_max]
 pool_size = len(current_pool)
 
 # --- 8. DASHBOARD UI ---
 st.title("🔐 VaultGen Pro Dashboard")
 
-# Section: Manual Strength Audit
+# Section: Manual Password Audit
 with st.expander("🔍 Check an Existing Password"):
     test_pwd = st.text_input("Enter password to test (Not saved to history)", type="password")
     if test_pwd:
@@ -164,32 +164,33 @@ with st.expander("🔍 Check an Existing Password"):
         leaks = check_pwned(test_pwd)
         if leaks > 0: c2.error(f"Leaked {leaks:,} times!")
         else: c2.success("No leaks found!")
-        c3.info(f"Strength: {'Strong' if m_bits >= 80 else 'Moderate' if m_bits >= 60 else 'Weak'}")
-    st.caption("ℹ️ **Note on Entropy:** Manual checks use conservative character logic; generated passphrases use precise dictionary logic.")
+        strength_eval = 'Strong' if m_bits >= 80 else 'Moderate' if m_bits >= 60 else 'Weak'
+        c3.info(f"Strength: {strength_eval}")
+    st.caption("ℹ️ **Note on Entropy:** Manual checks use character logic; generated phrases use dictionary logic.")
 
 st.divider()
 
-# Batch Generation Controls
+# Generation Action Buttons
 c_gen, c_clr = st.columns(2)
 if c_gen.button("🚀 Generate New Batch", use_container_width=True):
     batch = []
-    # Expanded Specials List for high-security suffixes.
+    # Expanded Specials Pool for higher complexity suffixes.
     specials_list = ['!', '@', '#', '$', '%', '&', '?', '*', '^', '=', '+', '`', '~' ,'<', '>', ':', ';', '|']
     for _ in range(b_size):
-        # Pick random words from the filtered dictionary pool.
+        # Select random words from dictionary.
         selected = [random.choice(current_pool) for _ in range(w_num)]
-        # Apply the smart capitalization logic.
+        # Apply the smart non-adjacent capitalization.
         for idx in get_caps_indices(w_num): selected[idx] = selected[idx].upper()
         
-        # Numeric logic: handles leading zeros using .zfill().
+        # Numeric suffix: calculates range based on digit count and pads with leading zeros.
         max_v = (10**d_num) - 1
         num_part = str(random.randint(0, max_v)).zfill(d_num)
-        # Picks the exact number of specials requested in the sidebar.
+        # Randomly pick the requested number of special characters.
         chosen_specials = "".join(random.choices(specials_list, k=s_num))
         
-        # Format: word-WORD-12345!
+        # Combine everything into the final passphrase string.
         pwd = "-".join(selected + [f"{num_part}{chosen_specials}"])
-        # Log to structural session history.
+        # Store structural clue in history.
         st.session_state.history.insert(0, {"pwd": pwd, "hint": generate_hint(pwd)})
         batch.append(pwd)
     
@@ -199,7 +200,7 @@ if c_gen.button("🚀 Generate New Batch", use_container_width=True):
 if c_clr.button("🗑️ Reset Display", use_container_width=True):
     st.session_state.passwords = []; st.rerun()
 
-# --- 9. ANALYTICS ---
+# --- 9. SECURITY ANALYTICS ---
 if st.session_state.passwords:
     st.divider()
     bits = calculate_entropy(w_num, pool_size, d_num, s_num)
@@ -207,29 +208,38 @@ if st.session_state.passwords:
     
     with col_met:
         st.metric("Entropy", f"{int(bits)} bits")
-        # Cracking estimation assuming 100 billion guesses per second.
+        # Estimate crack time based on 100 billion guesses per second.
         crack_yrs = (2**bits/100e9/31536000)
         st.metric("Crack Time", f"{crack_yrs:,.0f} yrs" if bits > 40 else "< 1 yr")
     
     with col_chart: 
-        # Line chart comparing generated batch entropy against the NIST 80-bit target.
+        # Visualization comparing batch strength to the NIST 80-bit target.
         chart_df = pd.DataFrame({
             "Current Strength": st.session_state.strength_log,
             "NIST Target (80 bits)": [80] * len(st.session_state.strength_log)
         })
         st.line_chart(chart_df, color=["#DDA0DD", "#90EE90"])
 
-    # --- 10. PASSWORD DISPLAY & INTERACTIVE TOOLS ---
+    # --- 10. PASSWORD DISPLAY & INTERACTION ---
     st.divider()
     for i, pwd in enumerate(st.session_state.passwords):
         p_col, q_col, a_col, l_col = st.columns([3, 0.5, 1, 1])
         
-        # Display: Standard Streamlit code block with built-in copy button.
+        # Alternating visual hierarchy (Purple for even rows, Green for odd).
+        hex_color = "#DDA0DD" if i % 2 == 0 else "#90EE90"
+        
         with p_col:
             if show_raw:
+                # Vertical color bar + Label + st.code (for built-in Copy button).
+                st.markdown(f"""
+                    <div style="border-left: 5px solid {hex_color}; padding-left: 10px; margin-bottom: -35px;">
+                        <small style="color: {hex_color}; font-family: monospace; font-weight: bold;">PASS {i+1}</small>
+                    </div>
+                """, unsafe_allow_html=True)
                 st.code(pwd, language=None)
             else:
-                st.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px;'><code style='color:#90EE90;'>{'●' * len(pwd)}</code></div>", unsafe_allow_html=True)
+                # Masked display for sensitive environments.
+                st.markdown(f"<div style='padding:10px; background:#1e1e1e; border-radius:5px; border-left: 5px solid {hex_color};'><code style='color:{hex_color};'>{'●' * len(pwd)}</code></div>", unsafe_allow_html=True)
         
         with q_col.expander("QR"):
             tab_copy, tab_sms = st.tabs(["Copy", "SMS"])
@@ -239,11 +249,11 @@ if st.session_state.passwords:
                 st.image(buf, caption="Scan to copy")
             with tab_sms:
                 phone = st.text_input("Number", placeholder="+123456789", key=f"sms_{i}")
-                # SMS URI standard for mobile triggers.
+                # standard SMS URI protocol for mobile triggers.
                 sms_uri = f"sms:{phone}?body=VaultGen Password: {pwd}"
                 buf_s = BytesIO()
                 qrcode.make(sms_uri).save(buf_s, format="PNG")
-                st.image(buf_s, caption="Scan to send text")
+                st.image(buf_s, caption="Scan to text")
             
         if a_col.button("🛡️ Audit", key=f"aud_{i}"):
             leaks = check_pwned(pwd)
@@ -251,19 +261,18 @@ if st.session_state.passwords:
             else: st.success("Safe!")
 
         if l_col.button("🔗 Burn Link", key=f"burn_{i}"):
-            # Generates a one-time UUID token for secure passphrase sharing.
+            # Generates unique UUID for sharing a passphrase via one-time link.
             token = str(uuid.uuid4())
             st.session_state.one_time_vault[token] = pwd
             st.info(f"Burn Token: {token}")
 
-# --- 11. FOOTER TICKER ---
+# --- 11. FOOTER LOGS & TIPS ---
 if st.session_state.history:
     with st.expander("📜 Secure Session Log (Hints Only)"):
-        # Display structural clues only to prevent cleartext exposure in the UI log.
+        # Shows structural clues only to avoid exposing sensitive cleartext.
         for item in st.session_state.history[:10]: st.write(f"Clue: {item['hint']}")
 
 st.divider()
-# Ticker for security education tips.
 st.info(random.choice([
     "💡 NIST Tip: Favor passphrases over complex short passwords.",
     "💡 Fact: Random capitalization significantly boosts entropy.",
