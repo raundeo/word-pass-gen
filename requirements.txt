@@ -1,2 +1,5 @@
 streamlit
 nltk
+qrcode[pil]
+requests
+pandas
