@@ -105,7 +105,7 @@ if not st.session_state.auth:
 # --- 6. SIDEBAR & USER CONTROLS ---
 with st.sidebar:
     st.title("⚙️ Settings")
-    w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 11)) # Word length constraints.
+    w_min, w_max = st.slider("Word Length Range", 4, 12, (4, 7)) # Word length constraints.
     w_num = st.slider("Word Count", 2, 5, 3) # Number of words in phrase.
     d_num = st.slider("Number of Digits", 2, 5, 5) # Number of digits in suffix.
     s_num = st.slider("Number of Specials", 1, 3, 1) # Number of specials in suffix.
